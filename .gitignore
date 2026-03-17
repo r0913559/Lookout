@@ -1,0 +1,57 @@
+# Secrets & environment
+.env
+*.env
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+*.whl
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Testing & coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# Cache & runtime data
+data/cache.db
+data/*.db
+*.sqlite3
+
+# Wordlists (operational - keep local, use .example files as templates)
+data/subdomains.txt
+data/phishing-subdomains.txt
+data/phishing-paths.txt
+!data/*.example.txt
+
+# Claude Code local settings
+.claude/
+
+# Reports (may contain case-specific IOC data)
+Rapporten/
+
+# Internal documentation (org setup, procedures)
+docs/

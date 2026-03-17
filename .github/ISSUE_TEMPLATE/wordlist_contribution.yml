@@ -1,0 +1,75 @@
+name: Wordlist Contribution
+description: Share subdomain prefixes or phishing panel paths from your investigations
+title: "[Wordlist] "
+labels: ["wordlist", "contribution"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Found interesting subdomain patterns or phishing panel paths during an investigation?
+        Share them here so we can add them to the example wordlists.
+
+        **Important**: Do not include victim data, credentials, or active phishing URLs.
+        Only share the patterns/prefixes, not the full domains.
+
+  - type: dropdown
+    id: type
+    attributes:
+      label: Wordlist type
+      options:
+        - "Subdomain prefixes (for DNS enumeration)"
+        - "URL paths (for directory/panel scanning)"
+        - "Both"
+    validations:
+      required: true
+
+  - type: textarea
+    id: entries
+    attributes:
+      label: Entries to add
+      description: One entry per line. Add a comment above each group to describe the pattern.
+      placeholder: |
+        # Banking login variations
+        my-login
+        secure-login
+        bank-verify
+
+        # SMS verification pages
+        pages/sms-verify.php
+        auth/otp.php
+    validations:
+      required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      description: What kind of phishing or infrastructure is this from?
+      options:
+        - "Banking / financial"
+        - "Telecom (Proximus, KPN, etc.)"
+        - "Delivery / postal (Bpost, PostNL, DHL)"
+        - "Government / tax"
+        - "Generic credential harvesting"
+        - "Phishing panel infrastructure"
+        - "Webshells / backdoors"
+        - "Other"
+    validations:
+      required: true
+
+  - type: input
+    id: region
+    attributes:
+      label: Region (if applicable)
+      description: Country or region where these patterns were observed
+      placeholder: "Belgium / Netherlands / Global"
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Brief description of the type of campaign or phishing kit (no victim data)
+    validations:
+      required: false

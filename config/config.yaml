@@ -1,0 +1,100 @@
+# Lookout Configuration
+# =====================
+# See HOWTO.md for full documentation on each setting.
+
+# Cache settings
+cache:
+  enabled: true
+  database_path: "data/cache.db"
+  default_ttl_hours: 24
+
+# ---------------------------------------------------------------------------
+# API TIERS
+# Set each API to "free" or "premium" to match your subscription.
+# This controls rate limits, daily quotas, and available features.
+# ---------------------------------------------------------------------------
+api_tiers:
+  virustotal: free       # free: 4/min, 500/day | premium: 30/min, unlimited
+  urlscan: free          # free: 100 public scans/day | premium: private scans
+  abuseipdb: free        # free: 1000/day | premium: 5000+/day
+  shodan: free           # free: basic host info | premium: historical, bulk
+  alienvault: free       # free (community) for all
+
+# ---------------------------------------------------------------------------
+# RATE LIMITS (requests per minute)
+# Auto-configured based on api_tiers above. Only override if you have
+# custom limits from your provider.
+# ---------------------------------------------------------------------------
+rate_limits:
+  # These are the FREE tier defaults. If you set a tier to "premium"
+  # above, the tool will use higher limits automatically.
+  virustotal: 4          # Free: 4/min | Premium: 30/min
+  urlscan: 10            # Conservative default
+  shodan: 10             # Free: ~1/sec limited | Premium: 60/min
+  abuseipdb: 10          # Conservative: spread 1000/day over work hours
+  whoisxml: 10
+  triage: 10
+  alienvault: 60         # Community tier is generous
+  # Free APIs (no key needed, but be polite)
+  rdap: 30
+  crtsh: 10              # crt.sh can be slow, don't hammer it
+  threatfox: 30
+  urlhaus: 30
+
+# ---------------------------------------------------------------------------
+# DAILY QUOTAS
+# Maximum API calls per day. Set to 0 for unlimited.
+# Based on free tier limits. Premium users: set to 0 or your actual limit.
+# ---------------------------------------------------------------------------
+daily_quotas:
+  virustotal: 500        # Free: 500/day | Premium: 0 (unlimited)
+  urlscan: 100           # Free: 100/day | Premium: 0
+  abuseipdb: 1000        # Free: 1000/day | Premium: 5000
+  shodan: 100            # Free: ~100 query credits/month | Premium: 0
+  alienvault: 0          # No known daily limit
+  # Free APIs
+  rdap: 0
+  crtsh: 0
+  threatfox: 0
+  urlhaus: 0
+
+# API-specific TTL overrides (in hours)
+ttl_overrides:
+  virustotal: 24
+  shodan: 168            # 7 days - infrastructure changes slowly
+  rdap: 168              # 7 days - WHOIS data is stable
+  crtsh: 168             # 7 days - certificates don't change often
+
+# Report settings
+reports:
+  default_format: "markdown"
+  include_raw_data: false
+  output_directory: "reports"
+
+# Risk scoring weights (must sum to 1.0)
+risk_weights:
+  virustotal: 0.35
+  abuseipdb: 0.25
+  threatfox: 0.20
+  urlhaus: 0.20
+
+# Enabled APIs (for selective querying)
+enabled_apis:
+  # Require API key
+  virustotal: true
+  urlscan: true
+  abuseipdb: true
+  shodan: true
+  whoisxml: false
+  triage: false
+  alienvault: false
+  # No API key required
+  rdap: true
+  crtsh: true
+  threatfox: true
+  urlhaus: true
+
+# Logging
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"

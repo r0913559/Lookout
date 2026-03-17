@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Questions & Discussion
+    url: https://github.com/tools4eu/lookout/discussions
+    about: Ask questions, share ideas, or discuss Lookout with other users

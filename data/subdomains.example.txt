@@ -1,0 +1,111 @@
+# Lookout - Subdomain Wordlist
+# ============================
+#
+# This file is a TEMPLATE. Copy it to subdomains.txt and enrich it
+# with your own entries based on your investigations and experience.
+#
+#   cp data/subdomains.example.txt data/subdomains.txt
+#
+# FORMAT:
+#   - One subdomain prefix per line
+#   - Lines starting with # are comments
+#   - Each prefix is prepended to the target domain:
+#     "admin" + "example.com" -> "admin.example.com"
+#
+# HOW TO ENRICH:
+#   As you investigate phishing cases, add the subdomain patterns you
+#   encounter. Group them by category for readability. Over time this
+#   becomes your personalized intelligence wordlist.
+#
+#   Example: if you investigate a phishing domain and find subdomains
+#   like "mijn-account.phishing-domain.com", add "mijn-account" to
+#   the telecom/billing section below.
+#
+# CATEGORIES TO CONSIDER:
+#   - Infrastructure: www, mail, ftp, ns, vpn, api, cdn
+#   - Admin panels: admin, cpanel, dashboard, panel, webmail
+#   - Phishing auth: login, signin, auth, sso, verify, secure
+#   - Phishing billing: pay, billing, invoice, refund, factuur
+#   - Phishing telecom: mijn, account, simkaart, abonnement
+#   - Phishing delivery: track, pakket, levering, bezorging
+#   - Phishing government: eid, itsme, belasting, boete
+#   - Banking: specific bank names and variations from your region
+#   - Dev/staging: dev, test, staging, beta, sandbox
+#   - Databases: db, mysql, phpmyadmin, redis, elastic
+#   - Typosquatting: common misspellings of brand names
+#
+# TIP: After each investigation, review what subdomains you found
+#      (via crt.sh, Shodan, passive DNS) and add new patterns here.
+
+# =====================================================================
+# STANDARD INFRASTRUCTURE
+# =====================================================================
+www
+mail
+ftp
+ns
+ns1
+ns2
+vpn
+remote
+api
+cdn
+smtp
+
+# =====================================================================
+# ADMIN / MANAGEMENT PANELS
+# =====================================================================
+admin
+panel
+cpanel
+webmail
+dashboard
+manage
+backend
+phpmyadmin
+
+# =====================================================================
+# PHISHING - AUTHENTICATION
+# =====================================================================
+login
+signin
+auth
+sso
+secure
+verify
+account
+myaccount
+
+# =====================================================================
+# PHISHING - BILLING / PAYMENT
+# =====================================================================
+pay
+billing
+invoice
+checkout
+
+# =====================================================================
+# PHISHING - CUSTOMER / SUPPORT
+# =====================================================================
+support
+help
+service
+client
+contact
+info
+
+# =====================================================================
+# DEVELOPMENT / STAGING
+# =====================================================================
+dev
+test
+staging
+beta
+demo
+sandbox
+
+# =====================================================================
+# ADD YOUR OWN CATEGORIES BELOW
+# =====================================================================
+# Tip: add region-specific patterns (e.g. Dutch/French phishing terms),
+# brand-specific subdomains, and patterns from your investigations.

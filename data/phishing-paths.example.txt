@@ -1,0 +1,103 @@
+# Lookout - Phishing Path Wordlist
+# =================================
+#
+# This file is a TEMPLATE. Copy it to phishing-paths.txt and enrich it
+# with paths you encounter during phishing kit investigations.
+#
+#   cp data/phishing-paths.example.txt data/phishing-paths.txt
+#
+# FORMAT:
+#   - One path per line (no leading slash needed)
+#   - Lines starting with # are comments
+#   - Each path is appended to the target URL:
+#     "panel/index.php" -> "https://target.com/panel/index.php"
+#
+# HOW TO ENRICH:
+#   When you analyze a phishing kit (from a takedown, a zip file, or
+#   a live site), document every interesting path you find:
+#   - Panel login pages and admin interfaces
+#   - Phishing flow pages (SMS verification, token entry, loading)
+#   - Data exfiltration endpoints (Telegram webhooks, log files)
+#   - Exposed config files, error logs, and storage directories
+#   - Webshells and backdoors left by kit developers
+#
+# CATEGORIES TO CONSIDER:
+#   - Panel roots: panel/, admin/, control-panel/, dashboard/
+#   - Login flows: auth/login.php, pages/sms.php, pages/token.php
+#   - Data leaks: panel/storage, error_log, .env, .git/config
+#   - Config files: setting/config.php, includes/check.php
+#   - Webshells: shell.php, cmd.php, filemanager.php
+#   - Anti-bot: antibots-debug/, botMother/
+#   - Telegram C2: telegramclick.php, alert-admin.php
+#   - WordPress: wp-admin, wp-login.php, wp-config.php
+#
+# TIP: Phishing kits often reuse the same directory structure.
+#      Document it once and you'll find it across many campaigns.
+
+# =====================================================================
+# PANEL / ADMIN
+# =====================================================================
+panel
+panel/index.php
+admin
+control-panel
+control-panel/index.php
+dashboard
+
+# =====================================================================
+# LOGIN / AUTHENTICATION PAGES
+# =====================================================================
+login
+auth/login.php
+pages/login.php
+index.php
+
+# =====================================================================
+# PHISHING FLOW STEPS
+# =====================================================================
+# These are the multi-step pages in a typical credential harvesting kit
+pages/sms.php
+pages/token.php
+pages/loading.php
+pages/success.php
+auth/sms.php
+auth/token.php
+auth/final.php
+
+# =====================================================================
+# DATA LEAKS / EXPOSED FILES
+# =====================================================================
+panel/storage
+error_log
+pages/error_log
+.env
+.git/config
+robots.txt
+
+# =====================================================================
+# CONFIG FILES
+# =====================================================================
+config.php
+setting/config.php
+setting/functions.php
+
+# =====================================================================
+# WEBSHELLS / BACKDOORS
+# =====================================================================
+shell.php
+cmd.php
+filemanager.php
+upload.php
+
+# =====================================================================
+# WORDPRESS
+# =====================================================================
+wp-admin
+wp-login.php
+wp-config.php
+
+# =====================================================================
+# ADD YOUR OWN PATHS BELOW
+# =====================================================================
+# Tip: when you investigate a phishing kit, add every path you find.
+# Include the full relative path (e.g. "panel/actions/fetch_panel.php").

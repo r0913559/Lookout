@@ -1,0 +1,53 @@
+[project]
+name = "lookout"
+version = "0.1.0"
+description = "Automated OSINT & Threat Intelligence for domains, IPs, hashes, and URLs"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "pyyaml>=6.0",
+    "aiohttp>=3.9",
+    "aiohttp-socks>=0.8",
+    "sqlalchemy>=2.0",
+    "aiosqlite>=0.19",
+    "typer>=0.9",
+    "rich>=13.0",
+    "jinja2>=3.1",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "ruff>=0.1",
+    "mypy>=1.0",
+]
+
+[project.scripts]
+lookout = "osint.cli.app:app"
+osint = "osint.cli.app:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/osint"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
