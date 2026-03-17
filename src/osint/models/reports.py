@@ -59,6 +59,8 @@ class InvestigationReport(BaseModel):
     # Source data
     sources_queried: list[str] = Field(default_factory=list)
     sources_with_data: list[str] = Field(default_factory=list)
+    sources_failed: list[str] = Field(default_factory=list)
+    source_errors: dict[str, str] = Field(default_factory=dict)
 
     # Raw results (optional, for detailed reports)
     raw_results: dict[str, Any] = Field(default_factory=dict)

@@ -61,6 +61,12 @@ class ReportGenerator:
             sources_with_data=[
                 s.value for s, r in result.results.items() if r and r.success
             ],
+            sources_failed=[s.value for s in result.sources_failed],
+            source_errors={
+                s.value: r.error_message or "Unknown error"
+                for s, r in result.results.items()
+                if r and not r.success and r.error_message
+            },
         )
 
         # Generate risk summary
@@ -169,6 +175,18 @@ class ReportGenerator:
         # Add general finding if clean
         if not findings and result.risk_level == RiskLevel.CLEAN:
             findings.append("No malicious indicators detected across all sources")
+
+        # Log failed sources
+        for source, api_result in result.results.items():
+            if api_result and not api_result.success:
+                findings.append(
+                    f"{source.value}: Query failed — {api_result.error_message or 'unknown error'}"
+                )
+
+        # Log sources that returned no results (not in results dict)
+        for source in result.sources_failed:
+            if source not in result.results:
+                findings.append(f"{source.value}: No response received")
 
         return findings
 
@@ -621,6 +639,11 @@ class ReportGenerator:
         _body(
             f"With data: {', '.join(report.sources_with_data) if report.sources_with_data else 'None'}"
         )
+        if report.sources_failed:
+            _body(f"Failed: {', '.join(report.sources_failed)}")
+        if report.source_errors:
+            for src, err in report.source_errors.items():
+                _body(f"  {src}: {err}")
 
         # ------------------------------------------------------------------ #
         # 10. Footer                                                           #
