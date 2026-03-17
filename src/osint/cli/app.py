@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sys
+from builtins import enumerate as _enumerate  # preserve builtin before Typer command shadows it
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -18,6 +19,11 @@ from rich.columns import Columns
 from rich.rule import Rule
 from rich.markdown import Markdown
 
+from osint.analysis.email_analyzer import (
+    HeaderAnalysis,
+    analyze_eml_file,
+    parse_email_address,
+)
 from osint.cache.manager import CacheManager
 from osint.core.config import get_settings, reload_settings
 from osint.core.constants import APISource, IndicatorType, OutputFormat, RiskLevel
@@ -809,11 +815,36 @@ def _print_next_steps(command: str, context: dict) -> None:
         console.print(f"  [bold cyan]lookout investigate {value}[/bold cyan]        Full investigation if not done yet")
         console.print(f"  [bold cyan]lookout enumerate {value}[/bold cyan]          Find more subdomains")
 
+    elif command == "trace":
+        final_domain = context.get("final_domain", "<final-domain>")
+        console.print(f"  [bold cyan]lookout investigate {final_domain}[/bold cyan]    Full OSINT investigation on final destination")
+        console.print(f"  [bold cyan]lookout dirscan {final_domain}[/bold cyan]        Scan for exposed paths/panels")
+        console.print(f"  [bold cyan]lookout enumerate {final_domain}[/bold cyan]      Find subdomains of final destination")
+
     elif command == "new":
         case_name = context.get("case_name", value)
         console.print(f"  [bold cyan]cd {case_name}[/bold cyan]")
         console.print(f"  [bold cyan]lookout investigate <indicator>[/bold cyan]     Start investigating")
         console.print(f"  [bold cyan]lookout detect <value>[/bold cyan]              Check what type an indicator is")
+
+    elif command == "email":
+        domain = context.get("domain", "<domain>")
+        console.print(f"  [bold cyan]lookout investigate {domain}[/bold cyan]        Investigate the sender domain")
+        console.print(f"  [bold cyan]lookout headers <file.eml>[/bold cyan]          Analyse full email headers from an .eml file")
+        console.print(f"  [bold cyan]lookout enumerate {domain}[/bold cyan]          Enumerate subdomains of the sender domain")
+
+    elif command == "headers":
+        domains = context.get("domains", [])
+        ips = context.get("ips", [])
+        if domains:
+            first_domain = domains[0]
+            console.print(f"  [bold cyan]lookout investigate {first_domain}[/bold cyan]   Investigate extracted domain")
+        if ips:
+            first_ip = ips[0]
+            console.print(f"  [bold cyan]lookout investigate {first_ip}[/bold cyan]        Investigate origin IP")
+        if not domains and not ips:
+            console.print(f"  [bold cyan]lookout investigate <domain>[/bold cyan]           Investigate an extracted domain")
+        console.print(f"  [bold cyan]lookout headers <file.eml> --investigate[/bold cyan]  Re-run with full OSINT enrichment")
 
     console.print()
 
@@ -1499,6 +1530,714 @@ def dirscan(
 
     # Next steps
     _print_next_steps("dirscan", {"value": target})
+
+
+# ---------------------------------------------------------------------------
+# trace command
+# ---------------------------------------------------------------------------
+
+@app.command()
+def trace(
+    url: str = typer.Argument(
+        ..., help="URL to trace (e.g. https://bit.ly/3xPhish)"
+    ),
+    proxy: Optional[str] = typer.Option(
+        None,
+        "--proxy",
+        "-p",
+        help="Proxy URL (e.g. socks5://127.0.0.1:9050 or http://proxy:8080)",
+    ),
+    output: Optional[Path] = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Save trace result to file (JSON)",
+    ),
+    investigate_flag: bool = typer.Option(
+        False,
+        "--investigate",
+        "-I",
+        help="Auto-run lookout investigate on every unique domain found in the chain",
+    ),
+    case: Optional[Path] = typer.Option(
+        None,
+        "--case",
+        "-C",
+        help="Case directory — auto-save trace to <case-dir>/data/ and update case.json",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Skip the OPSEC warning confirmation",
+    ),
+) -> None:
+    """
+    Follow a URL's redirect chain hop-by-hop and record each server.
+
+    WARNING: This command makes direct HTTP connections to EVERY server
+    in the redirect chain. Your IP will be visible to ALL of them.
+
+    Examples:
+        lookout trace https://bit.ly/3xPhish
+        lookout trace https://short.url/abc --proxy socks5://127.0.0.1:9050
+        lookout trace https://suspect.link --investigate
+        lookout trace https://phish.link --output trace.json
+    """
+    from urllib.parse import urlparse as _urlparse
+
+    from osint.enumeration.url_trace import trace_url
+
+    # ---- OPSEC WARNING ----
+    console.print()
+    if proxy:
+        console.print(Panel(
+            "[bold]This command makes direct HTTP requests to each server in the redirect chain.[/bold]\n"
+            "\n"
+            f"[green]Proxy configured:[/green] {proxy}\n"
+            "Your traffic will be routed through this proxy.\n"
+            "\n"
+            "[bold yellow]Every server in the chain will see:[/bold yellow]\n"
+            "  - The proxy's IP address (NOT yours)\n"
+            "  - A single GET request per hop\n"
+            "  - The User-Agent string and request headers\n"
+            "\n"
+            "[bold green]They will NOT see:[/bold green]\n"
+            "  - Your real IP address\n"
+            "\n"
+            "[dim]Redirect chains can span multiple different servers and CDNs.[/dim]",
+            title="[bold yellow]OPSEC Warning — Active Redirect Tracing (via proxy)[/bold yellow]",
+            border_style="yellow",
+            padding=(1, 2),
+        ))
+    else:
+        console.print(Panel(
+            "[bold red]This command makes direct HTTP requests to the target.[/bold red]\n"
+            "\n"
+            "[bold red]YOUR IP ADDRESS WILL BE VISIBLE TO EVERY SERVER IN THE CHAIN.[/bold red]\n"
+            "\n"
+            "Redirect chains often pass through multiple servers:\n"
+            "  URL shorteners, tracking redirectors, CDNs, and the final destination\n"
+            "  — all of them will log your IP address.\n"
+            "\n"
+            "[bold yellow]What every server in the chain WILL see:[/bold yellow]\n"
+            "  - Your public IP address in their access/server logs\n"
+            "  - A GET request with your User-Agent\n"
+            "  - The timestamp of your visit\n"
+            "\n"
+            "[bold]This is NOT passive reconnaissance.[/bold]\n"
+            "You are making live HTTP connections to potentially hostile infrastructure.\n"
+            "\n"
+            "[bold cyan]To hide your IP, use a proxy:[/bold cyan]\n"
+            "  lookout trace <url> --proxy socks5://127.0.0.1:9050\n"
+            "  lookout trace <url> --proxy http://proxy:8080\n"
+            "\n"
+            "[dim]Supported proxy types: HTTP, HTTPS, SOCKS4, SOCKS5[/dim]",
+            title="[bold red]OPSEC Warning — Active Redirect Tracing (NO PROXY)[/bold red]",
+            border_style="red",
+            padding=(1, 2),
+        ))
+
+    if not yes:
+        if not typer.confirm("Do you understand the risks and want to continue?", default=False):
+            console.print("[yellow]Cancelled.[/yellow]")
+            raise typer.Exit(0)
+
+    console.print()
+
+    # Validate URL scheme
+    parsed_input = _urlparse(url)
+    if parsed_input.scheme not in ("http", "https"):
+        console.print(
+            f"[red]Error:[/red] URL must start with http:// or https://. Got: '{url}'"
+        )
+        raise typer.Exit(1)
+
+    if proxy:
+        console.print(f"[dim]Proxy: {proxy}[/dim]")
+    console.print(f"[dim]Tracing: {url}[/dim]")
+
+    # Run the trace
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+        transient=True,
+    ) as progress:
+        progress.add_task(description="Following redirect chain...", total=None)
+
+        try:
+            trace_result = asyncio.run(trace_url(
+                url=url,
+                max_redirects=20,
+                timeout=10.0,
+                proxy=proxy,
+            ))
+        except Exception as exc:
+            console.print(f"[red]Error:[/red] {exc}")
+            raise typer.Exit(1)
+
+    # ---- Display results ----
+    console.print(f"\n[bold]Redirect chain for:[/bold] {url}\n")
+
+    if not trace_result.hops:
+        console.print("[yellow]No hops recorded — the URL may be unreachable.[/yellow]")
+        if trace_result.error:
+            console.print(f"[red]Error:[/red] {trace_result.error}")
+        raise typer.Exit(1)
+
+    # Hops table
+    table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+    table.add_column("#", justify="right", style="dim", min_width=3)
+    table.add_column("Status", justify="right", min_width=6)
+    table.add_column("URL", style="cyan", max_width=60)
+    table.add_column("Server")
+    table.add_column("IP")
+
+    for idx, hop in _enumerate(trace_result.hops, start=1):
+        # Status coloring
+        if hop.status_code == 0:
+            status_text = Text("ERR", style="bold red")
+        elif 200 <= hop.status_code < 300:
+            status_text = Text(str(hop.status_code), style="green")
+        elif 300 <= hop.status_code < 400:
+            status_text = Text(str(hop.status_code), style="yellow")
+        elif 400 <= hop.status_code < 500:
+            status_text = Text(str(hop.status_code), style="red")
+        else:
+            status_text = Text(str(hop.status_code), style="bold red")
+
+        # Truncate long URLs for display
+        display_url = hop.url
+        if len(display_url) > 60:
+            display_url = display_url[:57] + "..."
+
+        server_display = hop.server or "-"
+        ip_display = hop.ip or "-"
+
+        table.add_row(
+            str(idx),
+            status_text,
+            display_url,
+            server_display,
+            ip_display,
+        )
+
+    console.print(table)
+
+    # Final destination
+    console.print()
+    console.print(f"[bold]Final destination:[/bold] [cyan]{trace_result.final_url}[/cyan]")
+    console.print(
+        f"[dim]{trace_result.total_hops} hop(s) in {trace_result.duration_seconds:.2f}s[/dim]"
+    )
+
+    # Error notice
+    if trace_result.error:
+        console.print(f"\n[yellow]Note:[/yellow] {trace_result.error}")
+
+    # Domains in chain summary
+    if trace_result.domains_in_chain:
+        console.print(f"\n[bold]Domains in chain ({len(trace_result.domains_in_chain)}):[/bold]")
+
+        # Build a domain -> ip lookup from hops
+        domain_to_ip: dict[str, str] = {}
+        for hop in trace_result.hops:
+            hop_parsed = _urlparse(hop.url)
+            d = hop_parsed.hostname or ""
+            if d and hop.ip:
+                domain_to_ip[d] = hop.ip
+
+        for domain in trace_result.domains_in_chain:
+            ip_str = domain_to_ip.get(domain, "")
+            if ip_str:
+                console.print(f"  [cyan]{domain:<35}[/cyan] {ip_str}")
+            else:
+                console.print(f"  [cyan]{domain}[/cyan]")
+
+    # Tip for final destination
+    if trace_result.domains_in_chain:
+        final_domain = trace_result.domains_in_chain[-1]
+        console.print(
+            f"\n[dim]Tip: run [bold cyan]lookout investigate {final_domain}[/bold cyan]"
+            f" to check the final destination[/dim]"
+        )
+
+    # Save to explicit output file
+    if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(
+            json.dumps(trace_result.to_dict(), indent=2, default=str),
+            encoding="utf-8",
+        )
+        console.print(f"\n[green]Results saved to {output}[/green]")
+
+    # Auto-detect case directory
+    effective_case = case
+    if effective_case is None:
+        effective_case = _detect_case_dir()
+        if effective_case is not None:
+            console.print(f"[dim]Case directory detected: {effective_case}[/dim]")
+
+    # Auto-save to case directory
+    if effective_case is not None:
+        safe_url = (
+            url.replace("https://", "")
+               .replace("http://", "")
+               .replace("/", "_")
+               .replace(":", "_")
+               .replace("?", "_")
+               .replace("&", "_")
+               .replace("=", "_")
+        )
+        # Keep filename sane
+        if len(safe_url) > 80:
+            safe_url = safe_url[:80]
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"trace_{safe_url}_{timestamp}.json"
+        content = json.dumps(trace_result.to_dict(), indent=2, default=str)
+        saved_path = _auto_save_to_case(effective_case, "data", filename, content)
+        console.print(f"[dim]Trace auto-saved to {saved_path}[/dim]")
+        _update_case_json(effective_case, url)
+
+    # --investigate: run lookout investigate on each unique domain
+    if investigate_flag and trace_result.domains_in_chain:
+        console.print(f"\n[bold]Auto-investigating {len(trace_result.domains_in_chain)} domain(s)...[/bold]\n")
+        console.print(Rule())
+        for domain in trace_result.domains_in_chain:
+            console.print(f"\n[bold cyan]>>> lookout investigate {domain}[/bold cyan]\n")
+            try:
+                investigate(
+                    value=domain,
+                    format=OutputFormat.TABLE,
+                    output=None,
+                    no_cache=False,
+                    verbose=False,
+                    case=effective_case,
+                )
+            except SystemExit:
+                pass
+            except Exception as exc:
+                console.print(f"[yellow]Warning:[/yellow] investigate {domain} failed: {exc}")
+        console.print(Rule())
+
+    # Next steps
+    final_domain_for_tips = (
+        trace_result.domains_in_chain[-1]
+        if trace_result.domains_in_chain
+        else "<final-domain>"
+    )
+    _print_next_steps("trace", {"value": url, "final_domain": final_domain_for_tips})
+
+
+# ---------------------------------------------------------------------------
+# Email address investigation
+# ---------------------------------------------------------------------------
+
+@app.command()
+def email(
+    address: str = typer.Argument(..., help="Email address to analyse (e.g. security@phishing-bank.com)"),
+    format: OutputFormat = typer.Option(
+        OutputFormat.TABLE,
+        "--format",
+        "-f",
+        help="Output format (table, json, markdown, docx)",
+    ),
+    output: Optional[Path] = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Save output to file",
+    ),
+    case: Optional[Path] = typer.Option(
+        None,
+        "--case",
+        "-C",
+        help="Case directory — auto-save results and update case.json",
+    ),
+) -> None:
+    """
+    Analyse an email address and investigate its domain.
+
+    Parses the address, displays its components, then automatically runs a
+    full OSINT investigation on the sender domain.  Passive only — no
+    direct contact with the target infrastructure.
+
+    Examples:
+        lookout email security@phishing-bank.com
+        lookout email noreply@suspicious.com --output result.json
+        lookout email attacker@evil.com --case ./my-case
+    """
+    # Parse the address
+    parsed = parse_email_address(address)
+    if parsed is None:
+        console.print(f"[red]Error:[/red] '{address}' does not look like a valid email address.")
+        raise typer.Exit(1)
+
+    # Auto-detect case directory
+    effective_case = case
+    if effective_case is None:
+        effective_case = _detect_case_dir()
+        if effective_case is not None:
+            console.print(f"[dim]Case directory detected: {effective_case}[/dim]")
+
+    # Display parsed info
+    console.print()
+    console.print(Rule("Email Address Analysis", style="bold cyan"))
+    console.print()
+
+    info_table = Table(show_header=False, box=None, padding=(0, 2))
+    info_table.add_column("Field", style="bold", min_width=14)
+    info_table.add_column("Value", style="cyan")
+    info_table.add_row("Email", parsed.full_address)
+    info_table.add_row("Local part", parsed.local_part)
+    info_table.add_row("Domain", parsed.domain)
+    console.print(info_table)
+    console.print()
+
+    # Investigate the domain
+    console.print(f"[dim]Investigating domain: {parsed.domain}[/dim]")
+
+    async def run_investigation() -> InvestigationResult:
+        async with Investigator() as investigator:
+            return await investigator.investigate(parsed.domain, IndicatorType.DOMAIN)
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+        transient=True,
+    ) as progress:
+        progress.add_task(description=f"Investigating {parsed.domain}...", total=None)
+        try:
+            result = asyncio.run(run_investigation())
+        except OSINTError as e:
+            console.print(f"[red]Error during investigation:[/red] {e}")
+            raise typer.Exit(1)
+
+    # Output
+    if format == OutputFormat.JSON:
+        output_json(result, output)
+    elif format == OutputFormat.MARKDOWN:
+        output_markdown(result, output)
+    else:
+        print_investigation_result(result)
+        if output:
+            output_json(result, output)
+
+    # Auto-save to case
+    if effective_case is not None:
+        safe_addr = address.replace("@", "_at_").replace("/", "_").replace(":", "_")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base_name = f"email_{safe_addr}_{timestamp}"
+
+        report_gen = ReportGenerator()
+        report = report_gen.create_report(result)
+
+        md_content = report_gen.to_markdown(report)
+        pivots_md = _generate_pivot_markdown(result)
+        if pivots_md:
+            md_content += "\n" + pivots_md
+        md_content = md_content.replace("*Generated by OSINT Tool*", "*Generated by Lookout*")
+        _auto_save_to_case(effective_case, "reports", f"{base_name}.md", md_content)
+
+        import json as _json
+        json_data = result.to_dict()
+        json_data["email_address"] = parsed.to_dict()
+        _auto_save_to_case(
+            effective_case, "reports", f"{base_name}.json",
+            _json.dumps(json_data, indent=2, default=str),
+        )
+
+        console.print(f"[dim]Reports auto-saved to {Path(effective_case) / 'reports'}/[/dim]")
+        _update_case_json(effective_case, address)
+        _update_case_json(effective_case, parsed.domain)
+
+    _print_next_steps("email", {"value": address, "domain": parsed.domain})
+
+
+# ---------------------------------------------------------------------------
+# Email header analysis
+# ---------------------------------------------------------------------------
+
+@app.command()
+def headers(
+    file: Path = typer.Argument(..., help="Path to .eml file or plain-text header dump"),
+    investigate: bool = typer.Option(
+        False,
+        "--investigate",
+        "-I",
+        help="Auto-investigate all extracted domains and the origin IP",
+    ),
+    output: Optional[Path] = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Save header analysis to JSON",
+    ),
+    case: Optional[Path] = typer.Option(
+        None,
+        "--case",
+        "-C",
+        help="Case directory — auto-save results and update case.json",
+    ),
+) -> None:
+    """
+    Parse and analyse email headers from an .eml file or plain-text header dump.
+
+    Extracts sender information, the full routing chain, SPF/DKIM/DMARC
+    results, and derived threat indicators.  Optionally runs OSINT
+    investigations on every extracted domain and the origin IP.
+
+    Passive command — parses local files and optionally calls APIs.
+
+    Examples:
+        lookout headers phishing.eml
+        lookout headers headers.txt --investigate
+        lookout headers phishing.eml --output analysis.json --case ./my-case
+    """
+    # Parse the file
+    if not file.exists():
+        console.print(f"[red]Error:[/red] File not found: {file}")
+        raise typer.Exit(1)
+
+    try:
+        analysis = analyze_eml_file(file)
+    except (OSError, ValueError) as e:
+        console.print(f"[red]Error reading file:[/red] {e}")
+        raise typer.Exit(1)
+
+    # Auto-detect case directory
+    effective_case = case
+    if effective_case is None:
+        effective_case = _detect_case_dir()
+        if effective_case is not None:
+            console.print(f"[dim]Case directory detected: {effective_case}[/dim]")
+
+    # ------------------------------------------------------------------
+    # Display: sender information
+    # ------------------------------------------------------------------
+    console.print()
+    console.print(Rule("Email Header Analysis", style="bold cyan"))
+    console.print()
+
+    console.print("[bold]Sender Information:[/bold]")
+    sender_table = Table(show_header=False, box=None, padding=(0, 2))
+    sender_table.add_column("Field", style="bold", min_width=14)
+    sender_table.add_column("Value")
+
+    def _fmt_addr(addr_info) -> str:
+        if addr_info is None:
+            return "[dim]not present[/dim]"
+        return f"[cyan]{addr_info.full_address}[/cyan]"
+
+    sender_table.add_row("From", _fmt_addr(analysis.from_address))
+    sender_table.add_row("Return-Path", _fmt_addr(analysis.return_path))
+    sender_table.add_row("Reply-To", _fmt_addr(analysis.reply_to))
+    if analysis.subject:
+        sender_table.add_row("Subject", analysis.subject)
+    if analysis.date:
+        sender_table.add_row("Date", analysis.date)
+    if analysis.message_id:
+        sender_table.add_row("Message-ID", analysis.message_id)
+    console.print(sender_table)
+
+    # ------------------------------------------------------------------
+    # Display: authentication
+    # ------------------------------------------------------------------
+    console.print()
+    console.print("[bold]Authentication:[/bold]")
+
+    auth = analysis.auth_results
+    auth_table = Table(show_header=False, box=None, padding=(0, 2))
+    auth_table.add_column("Mechanism", style="bold", min_width=6)
+    auth_table.add_column("Result")
+    auth_table.add_column("Detail", style="dim")
+
+    def _auth_style(result: str) -> str:
+        r = result.lower()
+        if r == "pass":
+            return "green"
+        if r in ("fail", "permerror"):
+            return "bold red"
+        if r in ("softfail", "temperror"):
+            return "yellow"
+        if r == "not checked":
+            return "dim"
+        return "white"
+
+    for mechanism, result, detail in (
+        ("SPF", auth.spf, auth.spf_detail),
+        ("DKIM", auth.dkim, auth.dkim_detail),
+        ("DMARC", auth.dmarc, auth.dmarc_detail),
+    ):
+        style = _auth_style(result)
+        auth_table.add_row(mechanism, Text(result.upper(), style=style), detail[:80] if detail else "")
+    console.print(auth_table)
+
+    # ------------------------------------------------------------------
+    # Display: sending chain
+    # ------------------------------------------------------------------
+    if analysis.received_chain:
+        console.print()
+        console.print("[bold]Sending Chain[/bold] [dim](newest first)[/dim]")
+        chain_table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+        chain_table.add_column("#", justify="right", min_width=3)
+        chain_table.add_column("From", min_width=20)
+        chain_table.add_column("IP", min_width=16, style="cyan")
+        chain_table.add_column("By", min_width=20)
+        chain_table.add_column("Timestamp")
+
+        for idx, hop in _enumerate(analysis.received_chain, start=1):
+            from_str = hop.from_host or "[dim]-[/dim]"
+            ip_str = hop.from_ip or "[dim]-[/dim]"
+            by_str = hop.by_host or "[dim]-[/dim]"
+            ts_str = hop.timestamp or "[dim]-[/dim]"
+            chain_table.add_row(str(idx), from_str, ip_str, by_str, ts_str)
+        console.print(chain_table)
+
+    # ------------------------------------------------------------------
+    # Display: findings
+    # ------------------------------------------------------------------
+    if analysis.findings:
+        console.print()
+        console.print("[bold]Findings:[/bold]")
+        for finding in analysis.findings:
+            console.print(f"  [yellow]![/yellow] {finding}")
+
+    # ------------------------------------------------------------------
+    # Display: extracted indicators
+    # ------------------------------------------------------------------
+    if analysis.domains or analysis.ips:
+        console.print()
+        console.print("[bold]Extracted Indicators:[/bold]")
+        ioc_table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+        ioc_table.add_column("Type", min_width=8)
+        ioc_table.add_column("Value", style="cyan")
+        ioc_table.add_column("Source", style="dim")
+
+        # Map domains to their source for display
+        domain_sources: dict[str, str] = {}
+        if analysis.from_address:
+            domain_sources[analysis.from_address.domain] = "From header"
+        if analysis.return_path:
+            domain_sources[analysis.return_path.domain] = "Return-Path"
+        if analysis.reply_to:
+            domain_sources[analysis.reply_to.domain] = "Reply-To"
+
+        for domain in analysis.domains:
+            source = domain_sources.get(domain, "Received headers")
+            ioc_table.add_row("DOMAIN", domain, source)
+        for ip in analysis.ips:
+            ioc_table.add_row("IP", ip, "Received header")
+        console.print(ioc_table)
+
+    # ------------------------------------------------------------------
+    # Save JSON output
+    # ------------------------------------------------------------------
+    import json as _json
+
+    analysis_json = _json.dumps(analysis.to_dict(), indent=2, default=str)
+
+    if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(analysis_json, encoding="utf-8")
+        console.print(f"\n[green]Analysis saved to {output}[/green]")
+
+    # Auto-save to case
+    if effective_case is not None:
+        safe_name = file.stem.replace(" ", "_")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"headers_{safe_name}_{timestamp}.json"
+        saved_path = _auto_save_to_case(effective_case, "data", filename, analysis_json)
+        console.print(f"[dim]Analysis auto-saved to {saved_path}[/dim]")
+
+        # Record all extracted indicators in case.json
+        for domain in analysis.domains:
+            _update_case_json(effective_case, domain)
+        for ip in analysis.ips:
+            _update_case_json(effective_case, ip)
+        if analysis.from_address:
+            _update_case_json(effective_case, analysis.from_address.full_address)
+
+    # ------------------------------------------------------------------
+    # Optional: investigate all indicators
+    # ------------------------------------------------------------------
+    if investigate and (analysis.domains or analysis.ips):
+        indicators_to_investigate: list[tuple[str, IndicatorType]] = []
+        for domain in analysis.domains:
+            indicators_to_investigate.append((domain, IndicatorType.DOMAIN))
+        # Only investigate the last (origin) IP from the Received chain
+        if analysis.ips:
+            origin_ip = analysis.ips[-1]
+            try:
+                ip_type = detect_indicator_type(origin_ip)
+                indicators_to_investigate.append((origin_ip, ip_type))
+            except DetectionError:
+                pass
+
+        console.print()
+        console.print(Rule(f"Investigating {len(indicators_to_investigate)} indicators", style="bold cyan"))
+
+        async def run_all_investigations() -> list:
+            async with Investigator() as investigator:
+                tasks = [
+                    investigator.investigate(val, itype)
+                    for val, itype in indicators_to_investigate
+                ]
+                return await asyncio.gather(*tasks, return_exceptions=True)
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+            transient=True,
+        ) as progress:
+            progress.add_task(
+                description=f"Investigating {len(indicators_to_investigate)} indicators...",
+                total=None,
+            )
+            try:
+                inv_results = asyncio.run(run_all_investigations())
+            except Exception as e:
+                console.print(f"[red]Error during investigation:[/red] {e}")
+                raise typer.Exit(1)
+
+        for (val, _itype), inv_result in zip(indicators_to_investigate, inv_results):
+            if isinstance(inv_result, Exception):
+                console.print(f"[red]Failed to investigate {val}:[/red] {inv_result}")
+                continue
+            console.print()
+            print_investigation_result(inv_result)
+
+            # Auto-save each investigation result to case
+            if effective_case is not None:
+                safe_val = val.replace("/", "_").replace(":", "_").replace("\\", "_")
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                base_name = f"investigate_{safe_val}_{ts}"
+
+                try:
+                    report_gen = ReportGenerator()
+                    report = report_gen.create_report(inv_result)
+                    md_content = report_gen.to_markdown(report)
+                    pivots_md = _generate_pivot_markdown(inv_result)
+                    if pivots_md:
+                        md_content += "\n" + pivots_md
+                    md_content = md_content.replace("*Generated by OSINT Tool*", "*Generated by Lookout*")
+                    _auto_save_to_case(effective_case, "reports", f"{base_name}.md", md_content)
+                    json_data = inv_result.to_dict()
+                    _auto_save_to_case(
+                        effective_case, "reports", f"{base_name}.json",
+                        _json.dumps(json_data, indent=2, default=str),
+                    )
+                except Exception as save_err:
+                    console.print(f"[yellow]Could not auto-save report for {val}: {save_err}[/yellow]")
+
+    _print_next_steps("headers", {
+        "value": str(file),
+        "domains": analysis.domains,
+        "ips": analysis.ips,
+    })
 
 
 # ---------------------------------------------------------------------------
